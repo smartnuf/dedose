@@ -16,22 +16,22 @@ It can:
 Examples
 --------
 Create a plan:
-    python delta_sigma_taper.py init myplan --start 2026-03-29 --T 1.0 --D 56 --F 0.25
+    python dedose.py init myplan --start 2026-03-29 --T 1.0 --D 56 --F 0.25
 
 Ask what to take today:
-    python delta_sigma_taper.py dose myplan
+    python dedose.py dose myplan
 
 Ask what to take on a specific date (and fast-forward to it):
-    python delta_sigma_taper.py dose myplan --date 2026-04-10
+    python dedose.py dose myplan --date 2026-04-10
 
 Show status:
-    python delta_sigma_taper.py status myplan
+    python dedose.py status myplan
 
 List plans:
-    python delta_sigma_taper.py list
+    python dedose.py list
 
 Delete a plan:
-    python delta_sigma_taper.py delete myplan
+    python dedose.py delete myplan
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 
-STATE_FILE = Path.home() / ".delta_sigma_taper_state.json"
+STATE_FILE = Path.home() / ".dedose_state.json"
 DATE_FMT = "%Y-%m-%d"
 
 
