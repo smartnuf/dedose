@@ -46,7 +46,17 @@ from pathlib import Path
 from typing import Dict, Any
 
 
-STATE_FILE = Path.home() / ".dedose_state.json"
+DEFAULT_STATE_FILE = Path.home() / ".dedose_state.json"
+STATE_FILE = DEFAULT_STATE_FILE
+
+
+def set_state_file(path_str: str | None) -> None:
+    """Allow overriding the persistence path (useful for tests)."""
+    global STATE_FILE
+    if path_str:
+        STATE_FILE = Path(path_str).expanduser()
+    else:
+        STATE_FILE = DEFAULT_STATE_FILE
 DATE_FMT = "%Y-%m-%d"
 
 
@@ -346,6 +356,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Persistent named exponential taper scheduler using delta-sigma whole-tablet quantization."
     )
+    p.add_argument(
+        "--state-file",
+        help="Optional override for the persistent state file path (default ~/.dedose_state.json).",
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     p_init = sub.add_parser("init", help="Create or overwrite a named plan.")
@@ -395,6 +409,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    set_state_file(args.state_file)
     args.func(args)
 
 
