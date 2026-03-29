@@ -86,3 +86,37 @@ def test_state_file_override_isolated_storage(dedose, tmp_path):
         persisted = json.load(fh)
     assert "plans" in persisted
     assert plan.name in persisted["plans"]
+
+
+def test_simulate_schedule_tracks_cumulative_totals(dedose):
+    plan = build_plan(dedose, T=1.25, F=0.25, epsilon=0.05, D=30.0)
+    history = dedose.simulate_schedule(plan, 45)
+
+    assert len(history) == 45
+    assert plan.last_processed_date is None
+
+    final = history[-1]
+    assert final["cum_actual"] >= 0
+    assert abs(final["cum_actual"] - final["cum_ideal"]) < 1.0
+
+
+def test_simulate_schedule_requires_positive_days(dedose):
+    plan = build_plan(dedose)
+    with pytest.raises(SystemExit):
+        dedose.simulate_schedule(plan, 0)
+
+
+def test_streak_transition_points_identify_runs(dedose):
+    history = [
+        {"day_index": 0, "tablets": 1},
+        {"day_index": 1, "tablets": 1},
+        {"day_index": 2, "tablets": 0},
+        {"day_index": 3, "tablets": 0},
+        {"day_index": 4, "tablets": 1},
+        {"day_index": 5, "tablets": 0},
+        {"day_index": 6, "tablets": 0},
+        {"day_index": 7, "tablets": 1},
+    ]
+    taking_stops, rest_stops = dedose.streak_transition_points(history)
+    assert taking_stops == [(2, 2), (5, 1)]
+    assert rest_stops == [(4, 2), (7, 2)]

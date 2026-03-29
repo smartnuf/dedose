@@ -43,7 +43,7 @@ import os
 from dataclasses import dataclass, asdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 
 DEFAULT_STATE_FILE = Path.home() / ".dedose_state.json"
@@ -117,6 +117,26 @@ class Plan:
 
     def last_processed(self) -> date | None:
         return parse_date(self.last_processed_date) if self.last_processed_date else None
+
+    def fresh_state(self) -> "Plan":
+        """
+        Return a copy reset to its initial state.
+        Useful for simulations/visualisations that should not mutate persistence.
+        """
+        return Plan(
+            name=self.name,
+            start_date=self.start_date,
+            T=self.T,
+            D=self.D,
+            F=self.F,
+            epsilon=self.epsilon,
+            max_daily_tablets=self.max_daily_tablets,
+            last_processed_date=None,
+            residual=0.0,
+            current_ideal=self.T,
+            total_tablets_given=0,
+            total_ideal_sum=0.0,
+        )
 
     def horizon_rate(self) -> float:
         """
@@ -218,6 +238,71 @@ class Plan:
             )
 
         return last_dose
+
+
+def simulate_schedule(plan: Plan, days: int) -> List[Dict[str, Any]]:
+    """
+    Simulate a plan for a given number of days from the start date, returning history
+    entries containing daily and cumulative ideal vs quantized doses.
+    """
+    if days <= 0:
+        raise SystemExit("Days must be a positive integer.")
+
+    sim = plan.fresh_state()
+    history: List[Dict[str, Any]] = []
+    current = sim.start()
+    cumulative_ideal = 0.0
+    cumulative_actual = 0
+
+    for day_index in range(days):
+        ideal = sim.ideal_for_date(current)
+        tablets = sim.quantize(ideal)
+        cumulative_ideal += ideal
+        cumulative_actual += tablets
+        history.append(
+            {
+                "day_index": day_index,
+                "date": current,
+                "ideal": ideal,
+                "tablets": tablets,
+                "cum_ideal": cumulative_ideal,
+                "cum_actual": cumulative_actual,
+                "residual": sim.residual,
+            }
+        )
+        current += timedelta(days=1)
+
+    return history
+
+
+def streak_transition_points(history: List[Dict[str, Any]]) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """
+    Derive streak lengths for taking vs resting segments:
+      - taking_stops: (day_index, run_length) recorded when a run of taking tablets ends
+        because the current day has zero tablets.
+      - rest_stops: (day_index, run_length) recorded when a rest period ends and dosing resumes.
+    """
+    taking_run = 0
+    rest_run = 0
+    taking_stops: list[tuple[int, int]] = []
+    rest_stops: list[tuple[int, int]] = []
+
+    for entry in history:
+        idx = entry["day_index"]
+        taking_today = entry["tablets"] > 0
+
+        if taking_today:
+            taking_run += 1
+            if rest_run > 0:
+                rest_stops.append((idx, rest_run))
+                rest_run = 0
+        else:
+            rest_run += 1
+            if taking_run > 0:
+                taking_stops.append((idx, taking_run))
+                taking_run = 0
+
+    return taking_stops, rest_stops
 
 
 def plan_from_store(store: Dict[str, Any], name: str) -> Plan:
@@ -352,6 +437,77 @@ def cmd_delete(args: argparse.Namespace) -> None:
     print(f"Deleted plan '{args.name}'.")
 
 
+def cmd_plot(args: argparse.Namespace) -> None:
+    try:
+        import matplotlib.pyplot as plt  # type: ignore
+    except ImportError as exc:
+        raise SystemExit(
+            "Plotting requires matplotlib. Install it with 'pip install matplotlib'."
+        ) from exc
+
+    store = load_store()
+    plan = plan_from_store(store, args.name)
+    history = simulate_schedule(plan, args.days)
+    x = [entry["day_index"] for entry in history]
+
+    plt.figure(figsize=(8, 4.5))
+    if args.mode == "cumulative":
+        cum_ideal = [entry["cum_ideal"] for entry in history]
+        cum_actual = [entry["cum_actual"] for entry in history]
+        plt.plot(x, cum_ideal, label="Cumulative ideal dose", linewidth=2)
+        plt.plot(x, cum_actual, label="Cumulative quantized tablets", linewidth=2)
+        plt.ylabel("Cumulative tablets")
+        plt.title(f"Cumulative tracking for plan '{plan.name}'")
+    elif args.mode == "daily":
+        daily_ideal = [entry["ideal"] for entry in history]
+        daily_actual = [entry["tablets"] for entry in history]
+        plt.plot(x, daily_ideal, label="Ideal daily dose", linewidth=2)
+        plt.step(x, daily_actual, label="Quantized tablets (step)", where="post", linewidth=2)
+        plt.ylabel("Tablets/day")
+        plt.title(f"Daily ideal vs quantized tablets for plan '{plan.name}'")
+    else:
+        taking_stops, rest_stops = streak_transition_points(history)
+        if taking_stops:
+            x_take = [idx for idx, _ in taking_stops]
+            y_take = [length for _, length in taking_stops]
+            plt.stem(
+                x_take,
+                y_take,
+                linefmt="C0-",
+                markerfmt="C0o",
+                basefmt="k-",
+                label="Taking streak ending",
+                use_line_collection=True,
+            )
+        if rest_stops:
+            x_rest = [idx for idx, _ in rest_stops]
+            y_rest = [length for _, length in rest_stops]
+            plt.stem(
+                x_rest,
+                y_rest,
+                linefmt="C1-",
+                markerfmt="C1s",
+                basefmt="k-",
+                label="Rest streak ending",
+                use_line_collection=True,
+            )
+        plt.ylabel("Consecutive days")
+        plt.title(f"Streak transitions for plan '{plan.name}'")
+
+    plt.xlabel("Days since plan start")
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.3)
+    plt.tight_layout()
+
+    if args.output:
+        output_path = Path(args.output).expanduser()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(output_path, dpi=150)
+        print(f"Saved visualization to {output_path}")
+    else:
+        plt.show()
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Persistent named exponential taper scheduler using delta-sigma whole-tablet quantization."
@@ -402,6 +558,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_delete = sub.add_parser("delete", help="Delete a plan.")
     p_delete.add_argument("name", help="Plan name.")
     p_delete.set_defaults(func=cmd_delete)
+
+    p_plot = sub.add_parser("plot", help="Visualize cumulative ideal vs quantized tablets.")
+    p_plot.add_argument("name", help="Plan name.")
+    p_plot.add_argument(
+        "--days",
+        type=int,
+        default=120,
+        help="Number of days from the start date to include in the visualization (default 120).",
+    )
+    p_plot.add_argument(
+        "--mode",
+        choices=["cumulative", "daily", "streaks"],
+        default="cumulative",
+        help=(
+            "Plot cumulative sums (default), a daily step trace, or streak transitions "
+            "between taking and rest days."
+        ),
+    )
+    p_plot.add_argument(
+        "--output",
+        help="Optional file path to save the plot instead of showing it interactively.",
+    )
+    p_plot.set_defaults(func=cmd_plot)
 
     return p
 
