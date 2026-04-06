@@ -477,7 +477,6 @@ def cmd_plot(args: argparse.Namespace) -> None:
                 markerfmt="C0o",
                 basefmt="k-",
                 label="Taking streak ending",
-                use_line_collection=True,
             )
         if rest_stops:
             x_rest = [idx for idx, _ in rest_stops]
@@ -489,7 +488,6 @@ def cmd_plot(args: argparse.Namespace) -> None:
                 markerfmt="C1s",
                 basefmt="k-",
                 label="Rest streak ending",
-                use_line_collection=True,
             )
         plt.ylabel("Consecutive days")
         plt.title(f"Streak transitions for plan '{plan.name}'")
